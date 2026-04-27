@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { useWorldStore } from '../store/useWorldStore'
-import type { DynamicField, FieldType, FieldValue } from '../types/domain'
+import type { DynamicField, FieldType, FieldValue, NestedFieldValue } from '../types/domain'
 
-const fieldTypeOptions: FieldType[] = ['string', 'number', 'boolean', 'image', 'enum']
+const fieldTypeOptions: FieldType[] = ['string', 'number', 'boolean', 'image', 'enum', 'stack', 'assets', 'stats']
 
 function castInputValue(type: FieldType, value: string): FieldValue {
   if (type === 'number') {
@@ -18,6 +18,9 @@ function castInputValue(type: FieldType, value: string): FieldValue {
 function renderTableValue(field: DynamicField, value: FieldValue) {
   if (field.type === 'image' && typeof value === 'string' && value) {
     return <img src={value} alt={field.label} className="h-10 w-10 rounded object-cover" />
+  }
+  if ((field.type === 'stack' || field.type === 'assets' || field.type === 'stats') && typeof value === 'object') {
+    return JSON.stringify(value)
   }
   return String(value ?? '')
 }
@@ -37,6 +40,13 @@ export function EntityManagerPanel() {
   const updateRecordMeta = useWorldStore((state) => state.updateRecordMeta)
   const updateRecordValue = useWorldStore((state) => state.updateRecordValue)
   const removeRecord = useWorldStore((state) => state.removeRecord)
+  const enums = useWorldStore((state) => state.enums)
+  const primaryKeyField =
+    entityDefinition?.key === 'items' || entityDefinition?.key === 'equipment'
+      ? 'itemid'
+      : entityDefinition?.key === 'zones'
+        ? 'zoneid'
+        : 'id'
 
   const [newFieldLabel, setNewFieldLabel] = useState('')
   const [newFieldType, setNewFieldType] = useState<FieldType>('string')
@@ -63,14 +73,7 @@ export function EntityManagerPanel() {
 
   const addFieldClick = () => {
     if (!newFieldLabel.trim()) return
-    const options =
-      newFieldType === 'enum'
-        ? newFieldEnum
-            .split(',')
-            .map((option) => option.trim())
-            .filter(Boolean)
-        : []
-    addField(activeEntityId, newFieldLabel, newFieldType, options)
+    addField(activeEntityId, newFieldLabel, newFieldType, newFieldType === 'enum' ? newFieldEnum : undefined)
     setNewFieldLabel('')
     setNewFieldEnum('')
   }
@@ -79,19 +82,12 @@ export function EntityManagerPanel() {
     setEditingFieldId(field.id)
     setEditingLabel(field.label)
     setEditingType(field.type)
-    setEditingEnum(field.options?.join(', ') ?? '')
+    setEditingEnum(field.enumKey ?? '')
   }
 
   const saveEditField = () => {
     if (!editingFieldId || !editingLabel.trim()) return
-    const options =
-      editingType === 'enum'
-        ? editingEnum
-            .split(',')
-            .map((option) => option.trim())
-            .filter(Boolean)
-        : []
-    updateField(activeEntityId, editingFieldId, { label: editingLabel, type: editingType, options })
+    updateField(activeEntityId, editingFieldId, { label: editingLabel, type: editingType, enumKey: editingEnum })
     setEditingFieldId(null)
   }
 
@@ -102,13 +98,15 @@ export function EntityManagerPanel() {
       <div className="rounded-xl border border-slate-300 bg-white p-4 shadow-sm">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-800">{entityDefinition.label} Tablosu</h2>
-          <button
-            type="button"
-            onClick={() => addRecord(activeEntityId)}
-            className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700"
-          >
-            + Satır Ekle
-          </button>
+          {entityDefinition.key !== 'equipment' && (
+            <button
+              type="button"
+              onClick={() => addRecord(activeEntityId)}
+              className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700"
+            >
+              + Satır Ekle
+            </button>
+          )}
         </div>
 
         <div className="mb-3 flex flex-wrap gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -130,12 +128,18 @@ export function EntityManagerPanel() {
             ))}
           </select>
           {newFieldType === 'enum' && (
-            <input
+            <select
               value={newFieldEnum}
               onChange={(event) => setNewFieldEnum(event.target.value)}
-              placeholder="Enum seçenekleri: Boss, Elite, Normal"
               className="min-w-[220px] flex-1 rounded-md border border-slate-300 px-3 py-2 text-sm"
-            />
+            >
+              <option value="">Enum seç</option>
+              {Object.keys(enums).map((key) => (
+                <option key={key} value={key}>
+                  {key}
+                </option>
+              ))}
+            </select>
           )}
           <button
             type="button"
@@ -157,6 +161,11 @@ export function EntityManagerPanel() {
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Sütun Yönetimi</p>
           {bucket.fields.map((field) => (
             <div key={field.id} className="rounded-md border border-slate-200 bg-white p-2">
+              {field.key === primaryKeyField && (
+                <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-amber-600">
+                  Primary Key (zorunlu / kilitli)
+                </p>
+              )}
               {editingFieldId === field.id ? (
                 <div className="flex flex-wrap gap-2">
                   <input
@@ -176,11 +185,18 @@ export function EntityManagerPanel() {
                     ))}
                   </select>
                   {editingType === 'enum' && (
-                    <input
+                    <select
                       value={editingEnum}
                       onChange={(event) => setEditingEnum(event.target.value)}
                       className="min-w-[220px] flex-1 rounded border border-slate-300 px-2 py-1 text-sm"
-                    />
+                    >
+                      <option value="">Enum seç</option>
+                      {Object.keys(enums).map((key) => (
+                        <option key={key} value={key}>
+                          {key}
+                        </option>
+                      ))}
+                    </select>
                   )}
                   <button type="button" onClick={saveEditField} className="rounded bg-slate-900 px-2 py-1 text-xs text-white">
                     Kaydet
@@ -195,13 +211,19 @@ export function EntityManagerPanel() {
                     {field.label} <span className="text-slate-400">({field.type})</span>
                   </p>
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => startEditField(field)} className="text-xs text-blue-700">
+                    <button
+                      type="button"
+                      onClick={() => startEditField(field)}
+                      className="text-xs text-blue-700"
+                      disabled={field.key === primaryKeyField}
+                    >
                       düzenle
                     </button>
                     <button
                       type="button"
                       onClick={() => removeField(activeEntityId, field.id)}
                       className="text-xs text-red-600"
+                      disabled={field.key === primaryKeyField}
                     >
                       sil
                     </button>
@@ -225,9 +247,9 @@ export function EntityManagerPanel() {
               </tr>
             </thead>
             <tbody>
-              {filteredRecords.map((record) => (
+              {filteredRecords.map((record, index) => (
                 <tr
-                  key={record.id}
+                  key={`${record.id}-${index}`}
                   onClick={() => selectRecord(activeEntityId, record.id)}
                   className={`cursor-pointer border-t border-slate-200 ${
                     record.id === bucket.selectedId ? 'bg-blue-50' : 'hover:bg-slate-50'
@@ -283,6 +305,8 @@ export function EntityManagerPanel() {
                       )
                     }
                     className="w-full rounded-md border border-slate-300 px-3 py-2"
+                    required={field.key === primaryKeyField}
+                    readOnly={entityDefinition.key === 'equipment' && field.key === 'itemid'}
                   />
                 )}
                 {field.type === 'boolean' && (
@@ -310,12 +334,87 @@ export function EntityManagerPanel() {
                     }
                     className="w-full rounded-md border border-slate-300 px-3 py-2"
                   >
-                    {(field.options ?? []).map((option) => (
+                    {(enums[field.enumKey ?? ''] ?? []).map((option) => (
                       <option key={option} value={option}>
                         {option}
                       </option>
                     ))}
                   </select>
+                )}
+                {field.type === 'stack' && (
+                  <div className="grid grid-cols-3 gap-2">
+                    <select
+                      value={String((selectedRecord.values[field.key] as NestedFieldValue)?.enabled ?? false)}
+                      onChange={(event) =>
+                        updateRecordValue(activeEntityId, selectedRecord.id, field.key, {
+                          ...(selectedRecord.values[field.key] as NestedFieldValue),
+                          enabled: event.target.value === 'true',
+                        })
+                      }
+                      className="rounded-md border border-slate-300 px-2 py-2"
+                    >
+                      <option value="false">disabled</option>
+                      <option value="true">enabled</option>
+                    </select>
+                    <input
+                      type="number"
+                      value={String((selectedRecord.values[field.key] as NestedFieldValue)?.max ?? 0)}
+                      onChange={(event) =>
+                        updateRecordValue(activeEntityId, selectedRecord.id, field.key, {
+                          ...(selectedRecord.values[field.key] as NestedFieldValue),
+                          max: Number(event.target.value),
+                        })
+                      }
+                      className="rounded-md border border-slate-300 px-2 py-2"
+                    />
+                    <input
+                      value={String((selectedRecord.values[field.key] as NestedFieldValue)?.group ?? '')}
+                      onChange={(event) =>
+                        updateRecordValue(activeEntityId, selectedRecord.id, field.key, {
+                          ...(selectedRecord.values[field.key] as NestedFieldValue),
+                          group: event.target.value,
+                        })
+                      }
+                      className="rounded-md border border-slate-300 px-2 py-2"
+                    />
+                  </div>
+                )}
+                {field.type === 'assets' && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {['icon', 'mesh', 'animation', 'sound'].map((assetKey) => (
+                      <input
+                        key={assetKey}
+                        placeholder={assetKey}
+                        value={String((selectedRecord.values[field.key] as NestedFieldValue)?.[assetKey] ?? '')}
+                        onChange={(event) =>
+                          updateRecordValue(activeEntityId, selectedRecord.id, field.key, {
+                            ...(selectedRecord.values[field.key] as NestedFieldValue),
+                            [assetKey]: event.target.value,
+                          })
+                        }
+                        className="rounded-md border border-slate-300 px-2 py-2"
+                      />
+                    ))}
+                  </div>
+                )}
+                {field.type === 'stats' && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {['physicalDamage', 'magicDamage'].map((statKey) => (
+                      <input
+                        key={statKey}
+                        type="number"
+                        placeholder={statKey}
+                        value={String((selectedRecord.values[field.key] as NestedFieldValue)?.[statKey] ?? 0)}
+                        onChange={(event) =>
+                          updateRecordValue(activeEntityId, selectedRecord.id, field.key, {
+                            ...(selectedRecord.values[field.key] as NestedFieldValue),
+                            [statKey]: Number(event.target.value),
+                          })
+                        }
+                        className="rounded-md border border-slate-300 px-2 py-2"
+                      />
+                    ))}
+                  </div>
                 )}
                 {field.type === 'image' && typeof selectedRecord.values[field.key] === 'string' && selectedRecord.values[field.key] && (
                   <img

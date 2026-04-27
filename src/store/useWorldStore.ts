@@ -1,7 +1,16 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { NodeChange } from 'reactflow'
-import type { DynamicField, EntityDefinition, EntityRecord, FieldType, FieldValue, Relation } from '../types/domain'
+import { z } from 'zod'
+import type {
+  DynamicField,
+  EntityDefinition,
+  EntityRecord,
+  FieldType,
+  FieldValue,
+  NestedFieldValue,
+  Relation,
+} from '../types/domain'
 
 type PositionMap = Record<string, { x: number; y: number }>
 
@@ -21,14 +30,17 @@ interface WorldState {
   nodePositions: PositionMap
   exportJson: string
   relationTypes: string[]
+  enums: Record<string, string[]>
+  editorJson: string
+  runtimeJson: string
   setActiveEntity: (entityId: string) => void
   setActiveView: (view: 'table' | 'graph') => void
   addEntity: (label: string) => void
   removeEntity: (entityId: string) => void
   setFilter: (entityId: string, filter: string) => void
   selectRecord: (entityId: string, recordId: string | null) => void
-  addField: (entityId: string, label: string, type: FieldType, enumOptions?: string[]) => void
-  updateField: (entityId: string, fieldId: string, patch: { label: string; type: FieldType; options?: string[] }) => void
+  addField: (entityId: string, label: string, type: FieldType, enumKey?: string) => void
+  updateField: (entityId: string, fieldId: string, patch: { label: string; type: FieldType; enumKey?: string }) => void
   removeField: (entityId: string, fieldId: string) => void
   addRecord: (entityId: string) => void
   updateRecordMeta: (entityId: string, recordId: string, patch: Partial<Pick<EntityRecord, 'name'>>) => void
@@ -38,28 +50,35 @@ interface WorldState {
   removeRelation: (relationId: string) => void
   onNodesChange: (changes: NodeChange[]) => void
   connectNodes: (sourceId: string, targetId: string) => void
-  buildExportJson: () => void
+  buildEditorJson: () => void
+  buildRuntimeJson: () => { ok: boolean; errors: string[] }
   importFromJson: (jsonText: string) => { ok: boolean; message: string }
 }
 
 const initialDefinitions: EntityDefinition[] = [
   { id: 'entity_items', key: 'items', label: 'Eşyalar', color: '#2563eb', icon: '🧰' },
-  { id: 'entity_mobs', key: 'mobs', label: 'Yaratıklar', color: '#dc2626', icon: '👾' },
+  { id: 'entity_equipment', key: 'equipment', label: 'Ekipman', color: '#7c3aed', icon: '⚔️' },
   { id: 'entity_zones', key: 'zones', label: 'Bölgeler', color: '#16a34a', icon: '🗺️' },
 ]
 
 const defaultFields: Record<string, DynamicField[]> = {
   entity_items: [
+    { id: 'item-itemid', key: 'itemid', label: 'Item ID', type: 'string' },
     { id: 'item-rarity', key: 'rarity', label: 'Nadirlik', type: 'string' },
-    { id: 'item-icon', key: 'icon_url', label: 'İkon', type: 'image' },
+    { id: 'item-kind', key: 'kind', label: 'Kind', type: 'enum', enumKey: 'ItemKind' },
+    { id: 'item-stack', key: 'stack', label: 'Stack', type: 'stack' },
+    { id: 'item-assets', key: 'assets', label: 'Assets', type: 'assets' },
   ],
-  entity_mobs: [
-    { id: 'mob-level', key: 'level', label: 'Seviye', type: 'number' },
-    { id: 'mob-type', key: 'mob_type', label: 'Tür', type: 'enum', options: ['Normal', 'Boss', 'Elite'] },
+  entity_equipment: [
+    { id: 'eq-itemid', key: 'itemid', label: 'Item ID', type: 'string' },
+    { id: 'eq-category', key: 'category', label: 'Category', type: 'enum', enumKey: 'EquipmentCategory' },
+    { id: 'eq-assets', key: 'assets', label: 'Assets', type: 'assets' },
+    { id: 'eq-stats', key: 'stats', label: 'Stats', type: 'stats' },
   ],
   entity_zones: [
+    { id: 'zone-id', key: 'zoneid', label: 'Zone ID', type: 'string' },
     { id: 'zone-biome', key: 'biome', label: 'Biyom', type: 'string' },
-    { id: 'zone-danger', key: 'dangerLevel', label: 'Tehlike', type: 'number' },
+    { id: 'zone-pvp', key: 'pvpType', label: 'PvP Türü', type: 'enum', enumKey: 'PvPType' },
   ],
 }
 
@@ -78,6 +97,9 @@ function normalizeKey(value: string) {
 function defaultValueByType(type: FieldType): FieldValue {
   if (type === 'number') return 0
   if (type === 'boolean') return false
+  if (type === 'stack') return { enabled: false, max: 0, group: '' }
+  if (type === 'assets') return { icon: '', mesh: '', animation: '', sound: '' }
+  if (type === 'stats') return { physicalDamage: 0, magicDamage: 0 }
   return ''
 }
 
@@ -98,6 +120,11 @@ function createBucket(fields: DynamicField[]): EntityBucket {
 }
 
 const relationTypes = ['drops_from', 'spawns_in', 'contains', 'requires', 'crafts_into', 'related_to']
+const globalEnums = {
+  ItemKind: ['RESOURCE', 'EQUIPMENT', 'CONSUMABLE', 'QUEST'],
+  EquipmentCategory: ['Weapon', 'Armor', 'Accessory'],
+  PvPType: ['Safe', 'Open', 'DuelOnly'],
+}
 const entityColors = ['#7c3aed', '#ea580c', '#0891b2', '#be123c', '#0284c7', '#65a30d']
 const entityIcons = ['📦', '🐎', '📜', '🏰', '⚗️', '🛡️']
 
@@ -109,7 +136,7 @@ function normalizeImportField(field: unknown): DynamicField | null {
   if (!isObject(field)) return null
   if (typeof field.label !== 'string' || typeof field.type !== 'string') return null
   const type = field.type as FieldType
-  if (!['string', 'number', 'boolean', 'image', 'enum'].includes(type)) return null
+  if (!['string', 'number', 'boolean', 'image', 'enum', 'stack', 'assets', 'stats'].includes(type)) return null
 
   const label = field.label.trim()
   const key = typeof field.key === 'string' && field.key.trim() ? normalizeKey(field.key) : normalizeKey(label)
@@ -120,12 +147,97 @@ function normalizeImportField(field: unknown): DynamicField | null {
     key,
     label,
     type,
-    options:
-      type === 'enum' && Array.isArray(field.options)
-        ? field.options.map((option) => String(option).trim()).filter(Boolean)
-        : undefined,
+    enumKey: typeof field.enumKey === 'string' ? field.enumKey : undefined,
   }
 }
+
+function getPrimaryKeyField(entityKey: string): string {
+  if (entityKey === 'items' || entityKey === 'equipment') return 'itemid'
+  if (entityKey === 'zones') return 'zoneid'
+  return 'id'
+}
+
+function syncEquipmentWithItems(
+  entities: Record<string, EntityBucket>,
+  entityDefinitions: EntityDefinition[],
+): Record<string, EntityBucket> {
+  const itemEntity = entityDefinitions.find((entity) => entity.key === 'items')
+  const equipmentEntity = entityDefinitions.find((entity) => entity.key === 'equipment')
+  if (!itemEntity || !equipmentEntity) return entities
+
+  const itemsBucket = entities[itemEntity.id]
+  const equipmentBucket = entities[equipmentEntity.id]
+  if (!itemsBucket || !equipmentBucket) return entities
+
+  const equipmentItemIds = new Set(
+    itemsBucket.records
+      .filter((record) => String(record.values.kind) === 'EQUIPMENT' && record.id)
+      .map((record) => record.id),
+  )
+
+  const existingEquipment = new Map(equipmentBucket.records.map((record) => [record.id, record]))
+  const records: EntityRecord[] = []
+
+  equipmentItemIds.forEach((itemId) => {
+    const current = existingEquipment.get(itemId)
+    if (current) {
+      records.push({
+        ...current,
+        id: itemId,
+        values: {
+          ...current.values,
+          itemid: itemId,
+        },
+      })
+      return
+    }
+
+    records.push({
+      id: itemId,
+      name: `Equipment ${itemId}`,
+      values: {
+        itemid: itemId,
+        category: globalEnums.EquipmentCategory[0],
+        assets: defaultValueByType('assets'),
+        stats: defaultValueByType('stats'),
+      },
+    })
+  })
+
+  return {
+    ...entities,
+    [equipmentEntity.id]: {
+      ...equipmentBucket,
+      records,
+      selectedId: records.some((record) => record.id === equipmentBucket.selectedId)
+        ? equipmentBucket.selectedId
+        : records[0]?.id ?? null,
+    },
+  }
+}
+
+const runtimeItemSchema = z.object({
+  name: z.string().min(1),
+  kind: z.string().min(1),
+  stack: z.object({
+    enabled: z.boolean(),
+    max: z.number().int().nonnegative(),
+    group: z.string(),
+  }),
+  assets: z.object({
+    icon: z.string().optional().default(''),
+    mesh: z.string().optional().default(''),
+    animation: z.string().optional().default(''),
+    sound: z.string().optional().default(''),
+  }),
+  category: z.string().optional(),
+  stats: z
+    .object({
+      physicalDamage: z.number(),
+      magicDamage: z.number(),
+    })
+    .optional(),
+})
 
 function nextPositionsFromChanges(changes: NodeChange[], current: PositionMap): PositionMap {
   let changed = false
@@ -151,8 +263,11 @@ export const useWorldStore = create<WorldState>()(
   activeEntityId: initialDefinitions[0].id,
   activeView: 'table',
   exportJson: '',
+  editorJson: '',
+  runtimeJson: '',
   nodePositions: {},
   relationTypes,
+  enums: globalEnums,
   entityDefinitions: initialDefinitions,
   entities: Object.fromEntries(initialDefinitions.map((def) => [def.id, createBucket(defaultFields[def.id] ?? [])])),
   relations: [],
@@ -228,7 +343,7 @@ export const useWorldStore = create<WorldState>()(
       },
     })),
 
-  addField: (entityId, label, type, enumOptions = []) =>
+  addField: (entityId, label, type, enumKey) =>
     set((state) => {
       const key = normalizeKey(label)
       if (!key) return state
@@ -241,7 +356,7 @@ export const useWorldStore = create<WorldState>()(
         key,
         label: label.trim(),
         type,
-        options: type === 'enum' ? enumOptions : undefined,
+        enumKey: type === 'enum' ? enumKey : undefined,
       }
 
       const records = state.entities[entityId].records.map((record) => ({
@@ -281,7 +396,7 @@ export const useWorldStore = create<WorldState>()(
         label: patch.label.trim(),
         key: nextKey,
         type: patch.type,
-        options: patch.type === 'enum' ? patch.options ?? [] : undefined,
+        enumKey: patch.type === 'enum' ? patch.enumKey : undefined,
       }
 
       const records = bucket.records.map((record) => {
@@ -291,7 +406,7 @@ export const useWorldStore = create<WorldState>()(
         values[nextKey] =
           previousValue === undefined
             ? patch.type === 'enum'
-              ? patch.options?.[0] ?? ''
+              ? ''
               : defaultValueByType(patch.type)
             : previousValue
 
@@ -340,74 +455,125 @@ export const useWorldStore = create<WorldState>()(
     set((state) => {
       const fields = state.entities[entityId].fields
       const values = fields.reduce<Record<string, FieldValue>>((acc, field) => {
-        acc[field.key] = field.type === 'enum' ? field.options?.[0] ?? '' : defaultValueByType(field.type)
+        acc[field.key] =
+          field.type === 'enum'
+            ? state.enums[field.enumKey ?? '']?.[0] ?? ''
+            : defaultValueByType(field.type)
         return acc
       }, {})
       const entity = state.entityDefinitions.find((def) => def.id === entityId)
+      const primaryKeyField = getPrimaryKeyField(entity?.key ?? '')
       const record: EntityRecord = {
-        id: id(`record_${entity?.key ?? entityId}`),
+        id: `draft_${entity?.key ?? 'entity'}_${state.entities[entityId].records.length + 1}`,
         name: `${entity?.label ?? 'Kayıt'} ${state.entities[entityId].records.length + 1}`,
-        values,
+        values: { ...values, [primaryKeyField]: '' },
       }
-
-      return {
-        entities: {
-          ...state.entities,
-          [entityId]: {
-            ...state.entities[entityId],
-            records: [...state.entities[entityId].records, record],
-            selectedId: record.id,
-          },
+      const nextEntities = {
+        ...state.entities,
+        [entityId]: {
+          ...state.entities[entityId],
+          records: [...state.entities[entityId].records, record],
+          selectedId: record.id,
         },
+      }
+      const syncedEntities = syncEquipmentWithItems(nextEntities, state.entityDefinitions)
+      return {
+        entities: syncedEntities,
       }
     }),
 
   updateRecordMeta: (entityId, recordId, patch) =>
-    set((state) => ({
-      entities: {
-        ...state.entities,
-        [entityId]: {
-          ...state.entities[entityId],
-          records: state.entities[entityId].records.map((record) =>
-            record.id === recordId ? { ...record, ...patch } : record,
-          ),
-        },
-      },
-    })),
+    set((state) => {
+      const bucket = state.entities[entityId]
+      const entityDef = state.entityDefinitions.find((entity) => entity.id === entityId)
+      const primaryKeyField = getPrimaryKeyField(entityDef?.key ?? '')
+      let previousId = ''
+      const records = bucket.records.map((record) => {
+        if (record.id !== recordId) return record
+        previousId = record.id
+        const maybeName = patch.name ?? record.name
+        return { ...record, name: maybeName }
+      })
+      const nextRecord = records.find((record) => record.id === recordId)
+      const nextId = String(nextRecord?.values[primaryKeyField] ?? nextRecord?.id ?? '')
+
+      const normalizedRecords = records.map((record) =>
+        record.id === recordId ? { ...record, id: nextId || record.id } : record,
+      )
+      const normalizedId = nextId || recordId
+
+      return {
+        entities: syncEquipmentWithItems(
+          {
+            ...state.entities,
+            [entityId]: { ...bucket, records: normalizedRecords, selectedId: normalizedId },
+          },
+          state.entityDefinitions,
+        ),
+        relations: state.relations.map((relation) => ({
+          ...relation,
+          sourceId: relation.sourceId === previousId ? normalizedId : relation.sourceId,
+          targetId: relation.targetId === previousId ? normalizedId : relation.targetId,
+        })),
+      }
+    }),
 
   updateRecordValue: (entityId, recordId, fieldKey, value) =>
-    set((state) => ({
-      entities: {
-        ...state.entities,
-        [entityId]: {
-          ...state.entities[entityId],
-          records: state.entities[entityId].records.map((record) =>
-            record.id === recordId
-              ? {
-                  ...record,
-                  values: {
-                    ...record.values,
-                    [fieldKey]: value,
-                  },
-                }
-              : record,
-          ),
-        },
-      },
-    })),
+    set((state) => {
+      const bucket = state.entities[entityId]
+      const entityDef = state.entityDefinitions.find((entity) => entity.id === entityId)
+      const primaryKeyField = getPrimaryKeyField(entityDef?.key ?? '')
+      let previousId = ''
+      let nextId = ''
+
+      const records = bucket.records.map((record) => {
+        if (record.id !== recordId) return record
+        previousId = record.id
+        const nextValues = { ...record.values, [fieldKey]: value }
+        if (fieldKey === primaryKeyField) nextId = String(value)
+        return {
+          ...record,
+          id: fieldKey === primaryKeyField ? String(value) : record.id,
+          values: nextValues,
+        }
+      })
+
+      const resolvedId = nextId || recordId
+      return {
+        entities: syncEquipmentWithItems(
+          {
+            ...state.entities,
+            [entityId]: {
+              ...bucket,
+              records,
+              selectedId: bucket.selectedId === recordId ? resolvedId : bucket.selectedId,
+            },
+          },
+          state.entityDefinitions,
+        ),
+        relations: state.relations.map((relation) => ({
+          ...relation,
+          sourceId: relation.sourceId === previousId ? resolvedId : relation.sourceId,
+          targetId: relation.targetId === previousId ? resolvedId : relation.targetId,
+        })),
+      }
+    }),
 
   removeRecord: (entityId, recordId) =>
-    set((state) => ({
-      entities: {
+    set((state) => {
+      const nextEntities = {
         ...state.entities,
         [entityId]: {
           ...state.entities[entityId],
           records: state.entities[entityId].records.filter((record) => record.id !== recordId),
           selectedId: state.entities[entityId].selectedId === recordId ? null : state.entities[entityId].selectedId,
         },
-      },
-      relations: state.relations.filter((relation) => relation.sourceId !== recordId && relation.targetId !== recordId),
-    })),
+      }
+      return {
+        entities: syncEquipmentWithItems(nextEntities, state.entityDefinitions),
+        relations: state.relations.filter((relation) => relation.sourceId !== recordId && relation.targetId !== recordId),
+      }
+    }),
 
   setRelationType: (relationId, relationType) =>
     set((state) => ({
@@ -447,7 +613,7 @@ export const useWorldStore = create<WorldState>()(
       return { relations: [...state.relations, relation] }
     }),
 
-  buildExportJson: () =>
+  buildEditorJson: () =>
     set((state) => {
       const recordsById = new Map<string, EntityRecord>()
       state.entityDefinitions.forEach((entity) => {
@@ -496,8 +662,72 @@ export const useWorldStore = create<WorldState>()(
         })),
       }
 
-      return { exportJson: JSON.stringify(exportData, null, 2) }
+      const editorJson = JSON.stringify(exportData, null, 2)
+      return { editorJson, exportJson: editorJson }
     }),
+
+  buildRuntimeJson: () => {
+    const state = useWorldStore.getState()
+    const errors: string[] = []
+    const allIds = new Set<string>()
+
+    const itemDef = state.entityDefinitions.find((entity) => entity.key === 'items')
+    const equipmentDef = state.entityDefinitions.find((entity) => entity.key === 'equipment')
+    const zoneDef = state.entityDefinitions.find((entity) => entity.key === 'zones')
+    const items = itemDef ? state.entities[itemDef.id].records : []
+    const equipment = equipmentDef ? state.entities[equipmentDef.id].records : []
+    const zones = zoneDef ? state.entities[zoneDef.id].records : []
+    const equipmentById = new Map(equipment.map((record) => [record.id, record]))
+
+    ;[...items, ...zones].forEach((record) => {
+      if (!record.id || record.id.startsWith('draft_')) return
+      if (allIds.has(record.id)) errors.push(`Duplicate ID: ${record.id}`)
+      allIds.add(record.id)
+    })
+
+    items.forEach((item) => {
+      const stack = item.values.stack as NestedFieldValue | undefined
+      if (stack?.enabled && (!stack.max || Number(stack.max) <= 0)) {
+        errors.push(`${item.id} için stack.max zorunlu.`)
+      }
+    })
+
+    if (errors.length > 0) return { ok: false, errors }
+
+    const itemRegistry: Record<string, Record<string, unknown>> = {}
+    items.forEach((item) => {
+      if (!item.id || item.id.startsWith('draft_')) {
+        errors.push(`Items içinde geçersiz itemid: ${item.name}`)
+        return
+      }
+      const base = {
+        name: item.name,
+        kind: item.values.kind ?? 'RESOURCE',
+        stack: item.values.stack ?? { enabled: false, max: 0, group: '' },
+        assets: item.values.assets ?? { icon: '' },
+      } as Record<string, unknown>
+
+      const ext = equipmentById.get(item.id)
+      if (ext) {
+        base.category = ext.values.category ?? 'Weapon'
+        base.assets = ext.values.assets ?? base.assets
+        base.stats = ext.values.stats ?? { physicalDamage: 0, magicDamage: 0 }
+      }
+      const parsed = runtimeItemSchema.safeParse(base)
+      if (!parsed.success) {
+        errors.push(`${item.id} runtime şema hatası: ${parsed.error.issues[0]?.message ?? 'geçersiz alan'}`)
+        return
+      }
+      itemRegistry[item.id] = parsed.data
+    })
+
+    if (errors.length > 0) return { ok: false, errors }
+
+    const runtimeData = { version: '1.0.0', ItemRegistry: itemRegistry }
+    const runtimeJson = JSON.stringify(runtimeData, null, 2)
+    set({ runtimeJson, exportJson: runtimeJson })
+    return { ok: true, errors: [] }
+  },
 
   importFromJson: (jsonText) => {
     try {
@@ -593,6 +823,8 @@ export const useWorldStore = create<WorldState>()(
         nodePositions: {},
         activeEntityId: incomingDefinitions[0].id,
         exportJson: '',
+        editorJson: '',
+        runtimeJson: '',
       })
 
       return { ok: true, message: 'JSON başarıyla içe aktarıldı.' }
@@ -610,6 +842,7 @@ export const useWorldStore = create<WorldState>()(
         entityDefinitions: state.entityDefinitions,
         relations: state.relations,
         nodePositions: state.nodePositions,
+        enums: state.enums,
       }),
     },
   ),

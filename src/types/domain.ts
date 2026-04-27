@@ -1,14 +1,15 @@
-export type FieldType = 'string' | 'number' | 'boolean' | 'image' | 'enum'
+export type FieldType = 'string' | 'number' | 'boolean' | 'image' | 'enum' | 'stack' | 'assets' | 'stats'
 
 export interface DynamicField {
   id: string
   key: string
   label: string
   type: FieldType
-  options?: string[]
+  enumKey?: string
 }
 
-export type FieldValue = string | number | boolean
+export type NestedFieldValue = Record<string, string | number | boolean>
+export type FieldValue = string | number | boolean | NestedFieldValue
 
 export interface EntityRecord {
   id: string

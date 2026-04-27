@@ -14,8 +14,10 @@ function App() {
   const entityDefinitions = useWorldStore((state) => state.entityDefinitions)
   const addEntity = useWorldStore((state) => state.addEntity)
   const removeEntity = useWorldStore((state) => state.removeEntity)
-  const buildExportJson = useWorldStore((state) => state.buildExportJson)
+  const buildEditorJson = useWorldStore((state) => state.buildEditorJson)
+  const buildRuntimeJson = useWorldStore((state) => state.buildRuntimeJson)
   const importFromJson = useWorldStore((state) => state.importFromJson)
+  const runtimeJson = useWorldStore((state) => state.runtimeJson)
   const exportJson = useWorldStore((state) => state.exportJson)
 
   const handleCreateEntity = () => {
@@ -33,6 +35,17 @@ function App() {
     anchor.download = `mmorpg-world-${new Date().toISOString()}.json`
     anchor.click()
     URL.revokeObjectURL(url)
+  }
+
+  const handleEditorExport = () => {
+    buildEditorJson()
+  }
+
+  const handleRuntimeExport = () => {
+    const result = buildRuntimeJson()
+    if (!result.ok) {
+      alert(result.errors.join('\n'))
+    }
   }
 
   const handleImportClick = () => {
@@ -65,12 +78,11 @@ function App() {
                 MMORPG eşyalarını, yaratıklarını ve bölgelerini dinamik şemalarla yönet.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={buildExportJson}
-              className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
-            >
-              JSON Çıktısı Al
+            <button type="button" onClick={handleEditorExport} className="rounded-md bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
+              Editor JSON İndir
+            </button>
+            <button type="button" onClick={handleRuntimeExport} className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+              Runtime JSON İndir
             </button>
             <button
               type="button"
@@ -145,7 +157,7 @@ function App() {
         {exportJson && (
           <section className="rounded-xl border border-slate-300 bg-slate-950 p-4 shadow-sm">
             <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-white">JSON Çıktısı</h2>
+              <h2 className="text-lg font-semibold text-white">JSON Çıktısı ({exportJson === runtimeJson ? 'Runtime' : 'Editor'})</h2>
               <button
                 type="button"
                 onClick={downloadJson}
