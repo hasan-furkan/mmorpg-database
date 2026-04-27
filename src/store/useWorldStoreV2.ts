@@ -59,6 +59,7 @@ const initialDefinitions: EntityDefinition[] = [
 
 const globalEnums = {
   ItemKind: ['RESOURCE', 'EQUIPMENT', 'CONSUMABLE', 'QUEST'],
+  ItemCategory: ['Weapon', 'Armor', 'Tool', 'Consumable'],
   SkillType: ['ACTIVE', 'PASSIVE'],
   ZoneType: ['SAFE', 'BLACK'],
   ProgressionCategory: ['GATHERING', 'COMBAT'],
@@ -69,6 +70,9 @@ const defaultFields: Record<string, DynamicField[]> = {
   entity_item_registry: [
     { id: 'itemid', key: 'itemid', label: 'Item ID', type: 'string' },
     { id: 'kind', key: 'kind', label: 'Kind', type: 'enum', enumKey: 'ItemKind' },
+    { id: 'category', key: 'category', label: 'Category', type: 'enum', enumKey: 'ItemCategory' },
+    { id: 'stack', key: 'stack', label: 'Stack', type: 'object', objectShape: { enabled: 'boolean', max: 'number', group: 'string' } },
+    { id: 'stats', key: 'stats', label: 'Stats', type: 'object', objectShape: { physicalDamage: 'number', magicDamage: 'number' } },
     { id: 'durability', key: 'durability', label: 'Durability', type: 'object', objectShape: { max: 'number', lossPerUse: 'number' } },
     { id: 'economy', key: 'economy', label: 'Economy', type: 'object', objectShape: { baseValue: 'number' } },
     { id: 'requirements', key: 'requirements', label: 'Requirements', type: 'object', objectShape: { level: 'number' } },
