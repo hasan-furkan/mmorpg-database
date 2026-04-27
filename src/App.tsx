@@ -1,7 +1,7 @@
 import { useRef, useState, type ChangeEvent } from 'react'
 import { EntityManagerPanel } from './components/EntityManagerPanel'
 import { UniverseGraphPanel } from './components/UniverseGraphPanel'
-import { useWorldStore } from './store/useWorldStore'
+import { useWorldStore } from './store/useWorldStoreV2'
 
 function App() {
   const [newEntityLabel, setNewEntityLabel] = useState('')

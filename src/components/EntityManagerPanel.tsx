@@ -1,27 +1,18 @@
 import { useMemo, useState } from 'react'
-import { useWorldStore } from '../store/useWorldStore'
-import type { DynamicField, FieldType, FieldValue, NestedFieldValue } from '../types/domain'
+import { useWorldStore } from '../store/useWorldStoreV2'
+import type { DynamicField, FieldType, FieldValue } from '../types/domain'
 
-const fieldTypeOptions: FieldType[] = ['string', 'number', 'boolean', 'image', 'enum', 'stack', 'assets', 'stats']
+const fieldTypeOptions: FieldType[] = ['string', 'number', 'boolean', 'image', 'enum', 'object', 'stringArray', 'objectArray', 'numberRange']
 
 function castInputValue(type: FieldType, value: string): FieldValue {
-  if (type === 'number') {
-    const parsed = Number(value)
-    return Number.isNaN(parsed) ? 0 : parsed
-  }
-  if (type === 'boolean') {
-    return value === 'true'
-  }
+  if (type === 'number') return Number(value || 0)
+  if (type === 'boolean') return value === 'true'
   return value
 }
 
 function renderTableValue(field: DynamicField, value: FieldValue) {
-  if (field.type === 'image' && typeof value === 'string' && value) {
-    return <img src={value} alt={field.label} className="h-10 w-10 rounded object-cover" />
-  }
-  if ((field.type === 'stack' || field.type === 'assets' || field.type === 'stats') && typeof value === 'object') {
-    return JSON.stringify(value)
-  }
+  if (field.type === 'image' && typeof value === 'string' && value) return <img src={value} alt={field.label} className="h-10 w-10 rounded object-cover" />
+  if (Array.isArray(value) || typeof value === 'object') return JSON.stringify(value)
   return String(value ?? '')
 }
 
@@ -41,12 +32,17 @@ export function EntityManagerPanel() {
   const updateRecordValue = useWorldStore((state) => state.updateRecordValue)
   const removeRecord = useWorldStore((state) => state.removeRecord)
   const enums = useWorldStore((state) => state.enums)
-  const primaryKeyField =
-    entityDefinition?.key === 'items' || entityDefinition?.key === 'equipment'
-      ? 'itemid'
-      : entityDefinition?.key === 'zones'
-        ? 'zoneid'
-        : 'id'
+  const primaryKeyMap: Record<string, string> = {
+    itemRegistry: 'itemid',
+    skillRegistry: 'skillid',
+    recipeRegistry: 'recipeid',
+    mobRegistry: 'mobid',
+    zoneRegistry: 'zoneid',
+    progressionRegistry: 'progressionid',
+    mountRegistry: 'mountid',
+    lootTableRegistry: 'lootTableId',
+  }
+  const primaryKeyField = primaryKeyMap[entityDefinition?.key ?? ''] ?? 'id'
 
   const [newFieldLabel, setNewFieldLabel] = useState('')
   const [newFieldType, setNewFieldType] = useState<FieldType>('string')
@@ -98,15 +94,9 @@ export function EntityManagerPanel() {
       <div className="rounded-xl border border-slate-300 bg-white p-4 shadow-sm">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-slate-800">{entityDefinition.label} Tablosu</h2>
-          {entityDefinition.key !== 'equipment' && (
-            <button
-              type="button"
-              onClick={() => addRecord(activeEntityId)}
-              className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700"
-            >
-              + Satır Ekle
-            </button>
-          )}
+          <button type="button" onClick={() => addRecord(activeEntityId)} className="rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700">
+            + Satır Ekle
+          </button>
         </div>
 
         <div className="mb-3 flex flex-wrap gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -306,7 +296,6 @@ export function EntityManagerPanel() {
                     }
                     className="w-full rounded-md border border-slate-300 px-3 py-2"
                     required={field.key === primaryKeyField}
-                    readOnly={entityDefinition.key === 'equipment' && field.key === 'itemid'}
                   />
                 )}
                 {field.type === 'boolean' && (
@@ -341,79 +330,128 @@ export function EntityManagerPanel() {
                     ))}
                   </select>
                 )}
-                {field.type === 'stack' && (
-                  <div className="grid grid-cols-3 gap-2">
-                    <select
-                      value={String((selectedRecord.values[field.key] as NestedFieldValue)?.enabled ?? false)}
-                      onChange={(event) =>
-                        updateRecordValue(activeEntityId, selectedRecord.id, field.key, {
-                          ...(selectedRecord.values[field.key] as NestedFieldValue),
-                          enabled: event.target.value === 'true',
-                        })
-                      }
-                      className="rounded-md border border-slate-300 px-2 py-2"
-                    >
-                      <option value="false">disabled</option>
-                      <option value="true">enabled</option>
-                    </select>
-                    <input
-                      type="number"
-                      value={String((selectedRecord.values[field.key] as NestedFieldValue)?.max ?? 0)}
-                      onChange={(event) =>
-                        updateRecordValue(activeEntityId, selectedRecord.id, field.key, {
-                          ...(selectedRecord.values[field.key] as NestedFieldValue),
-                          max: Number(event.target.value),
-                        })
-                      }
-                      className="rounded-md border border-slate-300 px-2 py-2"
-                    />
-                    <input
-                      value={String((selectedRecord.values[field.key] as NestedFieldValue)?.group ?? '')}
-                      onChange={(event) =>
-                        updateRecordValue(activeEntityId, selectedRecord.id, field.key, {
-                          ...(selectedRecord.values[field.key] as NestedFieldValue),
-                          group: event.target.value,
-                        })
-                      }
-                      className="rounded-md border border-slate-300 px-2 py-2"
-                    />
-                  </div>
-                )}
-                {field.type === 'assets' && (
-                  <div className="grid grid-cols-2 gap-2">
-                    {['icon', 'mesh', 'animation', 'sound'].map((assetKey) => (
+                {field.type === 'object' && (
+                  <div className="space-y-2 rounded-md border border-slate-200 p-2">
+                    {Object.entries(field.objectShape ?? {}).map(([objectKey, objectType]) => (
                       <input
-                        key={assetKey}
-                        placeholder={assetKey}
-                        value={String((selectedRecord.values[field.key] as NestedFieldValue)?.[assetKey] ?? '')}
+                        key={objectKey}
+                        type={objectType === 'number' ? 'number' : 'text'}
+                        placeholder={objectKey}
+                        value={String((selectedRecord.values[field.key] as Record<string, unknown>)?.[objectKey] ?? '')}
                         onChange={(event) =>
                           updateRecordValue(activeEntityId, selectedRecord.id, field.key, {
-                            ...(selectedRecord.values[field.key] as NestedFieldValue),
-                            [assetKey]: event.target.value,
-                          })
+                            ...(selectedRecord.values[field.key] as Record<string, unknown>),
+                            [objectKey]: objectType === 'number' ? Number(event.target.value) : event.target.value,
+                          } as FieldValue)
                         }
-                        className="rounded-md border border-slate-300 px-2 py-2"
+                        className="w-full rounded-md border border-slate-300 px-2 py-2"
                       />
                     ))}
                   </div>
                 )}
-                {field.type === 'stats' && (
+                {field.type === 'numberRange' && (
                   <div className="grid grid-cols-2 gap-2">
-                    {['physicalDamage', 'magicDamage'].map((statKey) => (
+                    {[0, 1].map((idx) => (
                       <input
-                        key={statKey}
+                        key={idx}
                         type="number"
-                        placeholder={statKey}
-                        value={String((selectedRecord.values[field.key] as NestedFieldValue)?.[statKey] ?? 0)}
-                        onChange={(event) =>
-                          updateRecordValue(activeEntityId, selectedRecord.id, field.key, {
-                            ...(selectedRecord.values[field.key] as NestedFieldValue),
-                            [statKey]: Number(event.target.value),
-                          })
-                        }
+                        value={String((selectedRecord.values[field.key] as [number, number])?.[idx] ?? 0)}
+                        onChange={(event) => {
+                          const current = [...((selectedRecord.values[field.key] as [number, number]) ?? [0, 0])] as [number, number]
+                          current[idx] = Number(event.target.value)
+                          updateRecordValue(activeEntityId, selectedRecord.id, field.key, current)
+                        }}
                         className="rounded-md border border-slate-300 px-2 py-2"
                       />
                     ))}
+                  </div>
+                )}
+                {field.type === 'stringArray' && (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap gap-2">
+                      {((selectedRecord.values[field.key] as string[]) ?? []).map((entry, index) => (
+                        <span key={`${entry}-${index}`} className="rounded bg-slate-100 px-2 py-1 text-xs">
+                          {entry}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = [...((selectedRecord.values[field.key] as string[]) ?? [])]
+                              next.splice(index, 1)
+                              updateRecordValue(activeEntityId, selectedRecord.id, field.key, next)
+                            }}
+                            className="ml-2 text-red-600"
+                          >
+                            x
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const value = prompt('Değer gir')
+                        if (!value) return
+                        updateRecordValue(activeEntityId, selectedRecord.id, field.key, [...((selectedRecord.values[field.key] as string[]) ?? []), value])
+                      }}
+                      className="rounded border border-slate-300 px-2 py-1 text-xs"
+                    >
+                      {field.addLabel ?? 'Ekle'}
+                    </button>
+                  </div>
+                )}
+                {field.type === 'objectArray' && (
+                  <div className="space-y-2">
+                    {((selectedRecord.values[field.key] as Record<string, unknown>[]) ?? []).map((entry, idx) => (
+                      <div key={idx} className="rounded-md border border-slate-200 p-2">
+                        <div className="grid grid-cols-2 gap-2">
+                          {Object.entries(field.itemShape ?? {}).map(([itemKey, itemType]) => (
+                            <input
+                              key={itemKey}
+                              type={itemType === 'number' ? 'number' : 'text'}
+                              placeholder={itemKey}
+                              value={String(entry[itemKey] ?? '')}
+                              onChange={(event) => {
+                                const rows = [...((selectedRecord.values[field.key] as Record<string, unknown>[]) ?? [])]
+                                rows[idx] = {
+                                  ...rows[idx],
+                                  [itemKey]: itemType === 'number' ? Number(event.target.value) : event.target.value,
+                                }
+                                updateRecordValue(activeEntityId, selectedRecord.id, field.key, rows as unknown as FieldValue)
+                              }}
+                              className="rounded-md border border-slate-300 px-2 py-2"
+                            />
+                          ))}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const rows = [...((selectedRecord.values[field.key] as Record<string, unknown>[]) ?? [])]
+                            rows.splice(idx, 1)
+                            updateRecordValue(activeEntityId, selectedRecord.id, field.key, rows as unknown as FieldValue)
+                          }}
+                          className="mt-2 text-xs text-red-600"
+                        >
+                          Satırı Sil
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const empty = Object.fromEntries(
+                          Object.entries(field.itemShape ?? {}).map(([k, t]) => [k, t === 'number' ? 0 : t === 'boolean' ? false : '']),
+                        )
+                        updateRecordValue(
+                          activeEntityId,
+                          selectedRecord.id,
+                          field.key,
+                          [...((selectedRecord.values[field.key] as Record<string, unknown>[]) ?? []), empty] as unknown as FieldValue,
+                        )
+                      }}
+                      className="rounded border border-slate-300 px-2 py-1 text-xs"
+                    >
+                      {field.addLabel ?? 'Satır Ekle'}
+                    </button>
                   </div>
                 )}
                 {field.type === 'image' && typeof selectedRecord.values[field.key] === 'string' && selectedRecord.values[field.key] && (

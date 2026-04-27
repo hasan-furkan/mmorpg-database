@@ -1,4 +1,13 @@
-export type FieldType = 'string' | 'number' | 'boolean' | 'image' | 'enum' | 'stack' | 'assets' | 'stats'
+export type FieldType =
+  | 'string'
+  | 'number'
+  | 'boolean'
+  | 'image'
+  | 'enum'
+  | 'object'
+  | 'stringArray'
+  | 'objectArray'
+  | 'numberRange'
 
 export interface DynamicField {
   id: string
@@ -6,10 +15,15 @@ export interface DynamicField {
   label: string
   type: FieldType
   enumKey?: string
+  objectShape?: Record<string, 'string' | 'number' | 'boolean'>
+  itemShape?: Record<string, 'string' | 'number' | 'boolean'>
+  addLabel?: string
 }
 
-export type NestedFieldValue = Record<string, string | number | boolean>
-export type FieldValue = string | number | boolean | NestedFieldValue
+export type PrimitiveValue = string | number | boolean
+export type ObjectValue = Record<string, PrimitiveValue | PrimitiveValue[]>
+export type ObjectArrayValue = Array<Record<string, PrimitiveValue>>
+export type FieldValue = PrimitiveValue | PrimitiveValue[] | ObjectValue | ObjectArrayValue | [number, number]
 
 export interface EntityRecord {
   id: string

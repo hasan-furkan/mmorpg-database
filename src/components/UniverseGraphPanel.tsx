@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { Background, Controls, MiniMap, ReactFlow, type Connection, type Edge, type Node } from 'reactflow'
 import 'reactflow/dist/style.css'
-import { useWorldStore } from '../store/useWorldStore'
+import { useWorldStore } from '../store/useWorldStoreV2'
 import { EntityNode } from './EntityNode'
 
 const nodeTypes = {
